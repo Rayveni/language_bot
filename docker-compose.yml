@@ -1,0 +1,148 @@
+version: "3.91"
+services:
+  bot:
+    build:
+      context: ./
+      dockerfile: ./bot/Dockerfile      
+    image: local_image/tg_bot       
+    environment:
+      - TZ=${timezone}
+      - tg_secret=${tg_secret}
+      - app_logs=/app/bot/logs   
+      - log_level=${log_level}
+      - authdb_config=[["user","${db_user}"],["database","${db_name}"],["host","${db_host}"],["port","${db_port}"],["password","${db_user_password}"]]
+      - google_scopes=${google_scopes}
+      - google_token_path=/run/secrets/google_token       
+      - redirect_url=${redirect_url}                  
+    volumes:   
+      - bot_source_code:/app/bot   
+      - logs-store:/app/bot/logs        
+    command: >
+        bash -c "touch /app/__init__.py
+        && touch /app/external_libs/__init__.py
+        && python _main_.py" 
+    ports:
+      - "${bot_ports}"
+    secrets:
+      - google_token   
+
+  fast_api:
+    build:
+      context: ./
+      dockerfile: ./app/Dockerfile      
+    image: local_image/fast_api       
+    environment:
+      - TZ=${timezone}
+      - app_logs=/app/logs   
+      - log_level=${log_level}     
+      - google_token_path=/run/secrets/google_token    
+      - redirect_url=${redirect_url}       
+      - google_scopes=${google_scopes}      
+      - authdb_config=[["user","${db_user}"],["database","${db_name}"],["host","${db_host}"],["port","${db_port}"],["password","${db_user_password}"]]
+    volumes: 
+      - app_code_source:/app/app
+      - logs-store:/app/logs 
+    command: >
+        bash -c "touch /app/__init__.py
+        && touch /app/external_libs/__init__.py
+        && python server.py  "         
+    ports:
+      - "${app_ports}"
+    secrets:
+      - google_token      
+
+  postgres:
+    build:
+      context: ./db
+      dockerfile: Dockerfile   
+    container_name: authdb    
+    hostname: ${db_host}   
+    command: postgres -c 'max_connections=50'
+    environment:
+      POSTGRES_DB: "${db_name}" 
+      POSTGRES_USER: "${db_user}"
+      POSTGRES_PASSWORD: "${db_user_password}"
+      PGDATA: "/var/lib/postgresql/data/pgdata"
+    restart: unless-stopped
+    volumes:
+      - authdb-data:/var/lib/postgresql/data          
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 30MB   
+    ports:
+      - "${db_port}:${db_port}"        
+
+  pgadmin:
+    container_name: pgadmin_container
+    image: dpage/pgadmin4:7.5
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=${pglogin}
+      - PGADMIN_DEFAULT_PASSWORD=${pgpassword}
+      - PGADMIN_LISTEN_PORT=${pgadmin_int}
+    ports:
+      - "${pgadmin_ext}:${pgadmin_int}"
+    restart: unless-stopped
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+
+
+  jupyter:
+    build:
+      context: ./docker/ 
+      dockerfile: Dockerfile        
+      args:
+         NB_USER: "my-user"
+    user: root
+    image: local_image/jupyter     
+    working_dir: /home/my-user/work
+    ports:
+      - "8888:8888" 
+    volumes: 
+    - type: bind
+      source: C:\Users\Kart\Documents\jupyter_notebooks
+      target: /home/my-user/work   
+    environment: 
+      - CHOWN_HOME=yes
+      - restartable=yes 
+      - TZ=Europe/London
+      - DOCKER_STACKS_JUPYTER_CMD=notebook
+    #stdin_open: true
+    #tty: true
+    command: "start-notebook.sh --NotebookApp.token='' --NotebookApp.password=''"          
+      
+secrets:
+   google_token:
+     file: "${google_token_path}"
+
+volumes:
+  authdb-data:
+  pgadmin-data:     
+  db-manager: 
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: /db/manager 
+
+  bot_source_code: 
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: ${bot_code_source}
+
+  app_code_source: 
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: ${app_code_source}      
+  logs-store: 
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: ${logs_dir} 
+       
